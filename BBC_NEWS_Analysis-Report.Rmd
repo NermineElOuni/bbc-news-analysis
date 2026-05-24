@@ -1,0 +1,1928 @@
+---
+title: "BBC NEWS Analysis Coursework Report"
+author: "Nermine Ouni"
+date: "2025-12-10"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+    df_print: default
+  word_document: default
+  html_document: default
+geometry: a4paper,margin=1in
+fontsize: 11pt
+mainfont: "Times New Roman"
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1
+
+## (A) Data Exploration and cleaning
+
+We began by loading the `BBC News` dataset using `read_csv()`.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include= FALSE}
+Sys.setlocale("LC_TIME", "en_US.UTF-8")
+setwd(dirname(getActiveDocumentContext()$path))
+#install.packages('tinytex', repos= "https://cran.r-project.org")
+#tinytex::install_tinytex(force = TRUE)
+
+library(tidyverse)
+library(ggthemes)
+library(tm)
+library(tidytext)
+library(wordcloud)
+library(wordcloud2)
+library(maps)
+
+bbc_news <- read_csv("bbc_news_20220307_20240703.csv") 
+```
+
+```{r, echo=FALSE}
+date <- capture.output(str(bbc_news$pubDate))
+```
+
+As part of preparing the data for analysis, we inspected the `pubDate` variable and found that it was stored as a character vector containing strings that appear to represent dates (`r paste(date, collapse = " ")`)
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+bbc_newsclean <- bbc_news %>% 
+  mutate(
+    clean_date = gsub("^[A-Za-z]{3},\\s|\\sGMT$","", pubDate),
+    date = as_date(dmy_hms(clean_date, tz="GMT"))
+    ) 
+date <- capture.output(str(bbc_newsclean$date))
+```
+
+To convert this variable from character string to a date value, we created a new dataframe called `bbc_newsclean`.
+Then, using `gsub`, we removed the weekday abbreviation, comma, space and timezone from `pubDate`.
+After that, we parsed the cleaned string by the help of `dmy_hms()` and converted it to a `Date` object using `as_date()`.
+The result is stored in a new variable called `date`: `r paste(date, collapse = " ")`
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+time_span_days = as.numeric(diff(range(bbc_newsclean$date, na.rm = TRUE))) 
+timespan <- capture.output(time_span_days)
+```
+
+After cleaning the date, we started exploring the dataset by summarizing its main characteristics.
+We calculated the `timespan of the articles` using `range()` and ignored missing values.
+Then we applied `diff()` to the date range to subtract the earliest date from the latest date.
+The result we got is a `difftime` object.
+To obtain the timespan in days, we converted the object to a number using `as.numeric` and got the following result : `r paste(timespan, collapse = " ")`
+
+In addition, we calculated the `file size` in `MB`: `r file.info("bbc_news_20220307_20240703.csv")$size / (1024^2)`
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+description_length <- mean(nchar(bbc_newsclean$description))
+description <- capture.output(description_length)
+```
+
+We also calculated the average length of articles description.
+We found it was around : `r paste(description, collapse = " ")` which is considered relatively short.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+unique_titles = length(unique(bbc_newsclean$title))
+unique_titles <- capture.output(unique_titles)
+```
+
+To evaluate the diversity of the articles, we calculated the number of unique titles: `r paste(unique_titles, collapse = " ")`.
+This high number of unique titles indicates that the dataset contains diverse content.
+This is advantageous for our analysis especially when we create our plots and visualizations as they will capture distinct topics instead of repeating the same ideas.
+
+To have a better assessment of the diversity of the articles, We also checked for duplicate `GUID` values.
+The GUID which is the globally unique identifier is particularly useful for us to be certain about the number of duplicate articles.
+We found `r sum(duplicated(bbc_newsclean$guid))` GUID duplicates in the dataset.
+We decided to remove these duplicate entries to avoid having some articles over-represented.
+This way, we can ensure the validity of our results and interpretations.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include = FALSE}
+bbc_newsclean <- bbc_newsclean %>% filter(!duplicated(guid))
+glimpse(bbc_newsclean)
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE,include = FALSE}
+colSums(is.na(bbc_newsclean))
+```
+
+As part of cleaning our dataset, we checked the total number of missing values across the columns of the dataset and found none.
+This confirms that the dataset is diverse, which will contribute to more informative analyses and plots.
+We then calculated the number of articles per year and observed that the articles' count was extremely low in several years as only 1 article was recorded in 2013, 2017, 2018 and 2019 and 6 articles were recorded in 2021.
+Such low counts suggest that the dataset may be incomplete or contain missing data.
+Therefore, we decided to remove those years to ensure more informative and accurate plots.
+We used the `filter` function to achieve that.
+Then for the rest of the years, we summarized the yearly articles' count and stored the result in a new dataframe called `articles_per_year`:
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include= FALSE}
+bbc_newsclean <- bbc_newsclean %>% 
+  mutate(year = year(ymd(date))) %>%
+  filter(year > 2021)
+
+articles_per_year <- bbc_newsclean %>%
+  group_by(year) %>%
+  summarise(article_count = n()) %>%
+  ungroup()
+
+articles_per_year
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+library("knitr")
+kable(articles_per_year, caption = "Yearly Articles")
+```
+
+To produce the plot showing the number of articles that were published in each month, we calculated the monthly article counts.
+First, we rounded each article's date down to the first day of the month.
+The result was stored in a new variable called `month`.
+This will allow us to group our data by month.
+Then we summarised the monthly article counts in a new dataframe `articles_per_month`.
+However, we noticed that the last month in the dataset 2024-07-01 is incomplete.
+Therefore, we decided to remove it.
+Now we are ready to produce our Line Chart:
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, echo = FALSE, include= FALSE}
+bbc_newsclean <- bbc_newsclean %>%
+  mutate(month = floor_date(ymd(date), "month"))
+
+articles_per_month <- bbc_newsclean %>%
+  group_by(month) %>%
+  summarise(articles_per_month = n()) %>%
+  arrange(month)
+
+tail(articles_per_month)
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, echo = FALSE, include= FALSE}
+articles_per_month <- articles_per_month %>%
+  ungroup() %>%
+  filter(row_number() <= n()-1)
+
+tail(articles_per_month)
+```
+
+```{r, fig.align='center', echo=FALSE, message=FALSE, warning= FALSE}
+ggplot(articles_per_month, aes(x = month, y = articles_per_month)) +
+  geom_area(fill = "steelblue", alpha = 0.5) +
+  geom_line(color = "darkblue", size = 1) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "3 months") +
+  labs(title="Number of articles published per month",
+       x= "Month", y="Monthly articles") +
+  theme_minimal() +
+  theme(plot.title= element_text(size=18, 
+                                 colour = "red",
+                                 face = "bold",
+                                 margin = unit(c(0, 0, 5, 0), "mm")),
+        axis.title.x= element_text(size=14, 
+                                   colour="blue",
+                                   face = "bold", 
+                                   margin = unit(c(3, 0, 0, 0), "mm")),
+        axis.title.y= element_text(size=14, 
+                                   colour="blue",
+                                   face = "bold", 
+                                   margin = unit(c(0, 4, 0, 0), "mm")),
+        axis.text.x = element_text(angle = 45, 
+                                   hjust = 1, 
+                                   face = "bold.italic", 
+                                   size=12, 
+                                   colour = "firebrick"),
+        axis.text.y = element_text(size=12, 
+                                   face = "bold", 
+                                   colour = "firebrick")
+  )
+```
+
+=\> The line chart illustrates how the number of articles varies monthly from 2022 to 2024.
+In February 2022, there is a sharp surge in the number of articles, reaching around 1,000 articles.
+This upward trend is likely due to the outbreak of the Russo-Ukrainian war.
+Between March and November 2022, the number of articles remains relatively stable with slight fluctuations between 1,000 and 1,200 per month.
+As the year draws to a close, the number decreases slightly, reaching around 850 articles at the beginning of 2023.
+Over the course of 2023, the number of articles fluctuates moderately.
+In 2024, article counts increases and stabilizes at around 1,250 articles per month before rising sharply from March, reaching approximately 1,500 articles in late May.
+The surge is likely linked to intensified reporting on some political events and global crises occurring during that period.
+
+## (B) Analyzing BBC Articles by Topic
+
+This section involves analyses of BBC Articles by topic.
+To categorize the BBC articles by topic, we used a keyword-matching method.
+For each topic—such as Politics, Health, Business, Technology, Science, Entertainment, Sport, and Crime,we created a list of relevant keywords that are commonly used in articles on that topic.
+We then combined each article’s title and description into a single text field and counted how many keywords from each topic appeared in the text.
+The article was assigned to the topic with the most keyword matches, and if no keywords matched, it was labeled as “Other.” This method is simple, easy to interpret, and effective for news articles because they typically use clear topic-related vocabulary.
+It is also flexible, allowing the keyword lists to be updated or expanded, and computationally efficient, making it suitable for large datasets.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+topics <- list(
+  Politics = c("government","election","minister","mp","policy","vote","parliament",
+               "diplomat","sanction","russia","ukraine","military","war","conflict"),
+  Health = c("nhs","covid","virus","infection","disease","hospital","treatment",
+             "cancer","vaccine","coronavirus","medical","doctor","nurse","mental health"),
+  Business = c("business","economy","stock","market","shares","inflation","company",
+               "profit","trade","finance","crypto","oil","gas","energy"),
+  Technology = c("technology","tech","software","ai","cyber","hack","iphone","android",
+                 "social media","device","internet"),
+  Science = c("science","research","climate","environment","species","space",
+              "nasa","extinction","global warming"),
+  Entertainment = c("film","movie","tv","celebrity","music","artist","actor","actress",
+                    "oscar","concert","festival","show"),
+  Sport = c("sport","football","goal","match","premier league","tennis","cricket",
+            "rugby","world cup","olympics","athlete","team","score"),
+  Crime = c("police","court","trial","judge","crime","murder","attack","shooting",
+            "arrest","investigation","suspect","victim","legal","law","sentence"),
+  Other = character(0)
+)
+```
+
+A topic was assigned to each article by counting how many keywords from each topic appear in the text.
+The text was converted to lowercase for consistent matching, and a score computed for every topic using keyword detection.
+If no keywords are found, the article is classified as “Other”.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+#Remove spaces, numbers, :, ' " from title and description
+bbc_newsclean <- bbc_newsclean %>%
+  mutate(
+    clean_title = title %>%
+      stripWhitespace() %>%   # remove extra spaces
+      removeNumbers() %>%     # remove numbers
+      gsub("[:'\"]", "", .),  # remove :, ', "
+    
+    clean_description = description %>%
+      stripWhitespace() %>% 
+      removeNumbers() %>% 
+      gsub("[:'\"]", "", .)
+  )
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+bbc_newsclean$text <- paste(bbc_newsclean$clean_title, bbc_newsclean$clean_description)
+bbc_newsclean$text
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+classify_topic <- function(text) {
+  
+  # Convert to lowercase to make matching easier
+  text_lower <- tolower(text)
+  
+  # Count keyword matches for each topic
+  scores <- sapply(topics, function(words) {
+    sum(stringr::str_detect(text_lower, words))
+  })
+  
+  # If no matches, return "Other"
+  if (all(scores == 0)) {
+    return("Other")
+  }
+  
+  # Otherwise return the topic with the highest score
+  return(names(which.max(scores)))
+}
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+bbc_newsclean$topic <- sapply(bbc_newsclean$text, classify_topic)
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+topic_counts <- as.data.frame(table(bbc_newsclean$topic))
+```
+
+```{r fig.align='center', echo=FALSE, message=FALSE, warning= FALSE}
+ggplot(topic_counts, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Distribution of BBC Articles by Topic",
+    x = "Topic",
+    y = "Number of Articles"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+This plot visualizes how BBC articles are distributed across topics by creating a bar chart of the topic frequencies.
+It uses `ggplot2` to map each topic to the x-axis and its article count to the y-axis, applies a minimal theme for clarity, and rotates the x-axis labels for easier reading.
+
+To analyze how the number of articles per topic varies over time, we focused on the years 2022, 2023, and 2024, as exploratory analysis showed that the majority of articles are concentrated in this period, with earlier years containing sparse data that could act as outliers and distort trends.
+Monthly article counts were aggregated by topic to observe temporal patterns.By restricting the analysis to these three years and excluding incomplete or extreme outlier months, the trends are clearer and more representative of typical publication behavior, allowing for accurate assessment of topic dynamics over time.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+# Count articles per topic per month
+monthly_topic_counts <- bbc_newsclean %>%
+  group_by(year, month, topic) %>%
+  summarise(article_count = n(), .groups = "drop")
+
+# Plot monthly trends
+ggplot(monthly_topic_counts, aes(x = month, y = article_count, color = topic, group = topic)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  facet_wrap(~ year, scales = "free_x", ncol = 1) +
+  scale_x_date(
+    date_breaks = "1 month",
+    date_labels = "%b"
+  ) +
+  labs(
+    title = "Monthly Trends of BBC Articles by Topic (2022–2024)",
+    x = "Month",
+    y = "Number of Articles",
+    color = "Topic"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(size = 18, face = "bold"),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+bbc_newsclean <- bbc_newsclean %>%
+  mutate(
+    text_length_chars = nchar(text),              # character count
+    text_length_words = str_count(text, "\\S+")   # word count
+  )
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+topic_summary <- bbc_newsclean %>%
+  group_by(topic) %>%
+  summarise(
+    num_articles = n(),
+    avg_words = mean(text_length_words),
+    avg_chars = mean(text_length_chars),
+    max_words = max(text_length_words),
+    min_words = min(text_length_words),
+    .groups = "drop"
+  )
+```
+
+We aded two new measures of article length: the total number of characters and the total number of words in each article’s combined text.
+These metrics help quantify text size and support further analysis of article structure.
+
+A summary table was created for each topic, reporting the number of articles and basic text-length statistics.
+It calculates average, maximum, and minimum word and character counts, allowing for comparison of article length across topics.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+library("knitr")
+kable(topic_summary, caption = "Topic Summary")
+```
+
+```{r, fig.align='center', echo=FALSE, message=FALSE, warning= FALSE}
+ggplot(topic_summary, aes(x = reorder(topic, avg_words), y = avg_words, fill = topic)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(
+    title = "Average Article Length by Topic",
+    x = "Topic",
+    y = "Average Words"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+This plot compares average article length across topics by displaying the mean word count for each one.
+Topics are reordered by their average length and shown in a horizontal bar chart for easier comparison, with minimal styling and no legend to reduce visual clutter.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+#Title length
+bbc_newsclean <- bbc_newsclean %>% mutate(title_length = str_count(title, "\\S+"))
+
+bbc_newsclean
+
+
+#Description length separately
+bbc_newsclean <- bbc_newsclean %>% mutate(description_length = str_count(description, "\\S+"))
+
+#Readability metrics (requires quanteda or textstat_readability from quanteda.textstats):
+
+
+str(bbc_newsclean$text)
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+# Compute readability per article
+library(quanteda)
+library(quanteda.textstats)
+readability_scores <- textstat_readability(bbc_newsclean$text, measure = "Flesch.Kincaid")
+
+bbc_newsclean$flesch_kincaid <- readability_scores$Flesch.Kincaid
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+bbc_newsclean %>%
+  group_by(topic) %>%
+  summarise(avg_flesch = mean(flesch_kincaid, na.rm = TRUE)) %>%
+  arrange(desc(avg_flesch))
+```
+
+Furthermore we explored BBC articles by examining additional text-based characteristics across topics.
+We calculated the number of words in article titles and descriptions to quantify length, and we computed Flesch–Kincaid readability scores to assess linguistic complexity.
+By summarizing these metrics by topic, we can identify patterns such as which topics tend to have longer or more complex articles, and highlight articles that do not fit neatly into predefined categories (“Other”).
+These measures provide a richer understanding of the textual structure and style of news content beyond simple topic frequency.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+other_articles <- bbc_newsclean %>%
+  filter(topic == "Other") %>%
+  select(clean_title, clean_description, text)
+
+nrow(other_articles)
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+
+# Combine text (title + description) if not already done
+# other_articles <- other_articles %>%
+# mutate(text = paste(title, description, sep = " "))
+
+# Tokenize words and remove stop words
+data("stop_words")  # from tidytext
+
+other_words <- other_articles %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words) %>%   # remove common English stop words
+  filter(str_detect(word, "[a-z]"))  # remove numbers/symbols
+
+other_words_freq <- other_words %>%
+  count(word, sort = TRUE)
+
+head(other_words_freq, 20)  # top 20 most frequent words
+```
+
+Analysis of “Other” articles reveals the most frequently used words after removing common stop words and non-alphabetic tokens.
+The top words may indicate recurring themes or subtopics that were not captured by the predefined categories.
+For example, frequent mentions of words related to international events, human interest stories, or niche cultural topics could suggest areas like local news, travel, or social issues.
+The visualization of the top 20 words provides insight into these latent patterns and highlights potential subtopics that could be used to refine or expand the existing topic classification.
+
+```{r, fig.align='center', echo=FALSE, message=FALSE, warning= FALSE}
+ggplot(head(other_words_freq, 20), aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "skyblue") +
+  coord_flip() +
+  labs(
+    title = "Top Words in 'Other' Articles",
+    x = "Word",
+    y = "Frequency"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(face = "bold")
+  )
+
+
+```
+
+## (C) Exploring the Geographical Dimension of BBC Articles
+
+First, we cleaned `GUID URLs` by removing `numbers`, `whitespaces`, `slashes`, the `base URL` `https://www.bbc.co.uk/` and some of the `recurrent topic terms` that appear often in the GUIDs such as `news, sport, world, business` etc..
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+bbc_newsclean$clean_guid <- removeNumbers(bbc_newsclean$guid)
+bbc_newsclean$clean_guid <- stripWhitespace(bbc_newsclean$clean_guid)
+bbc_newsclean$clean_guid <- gsub("https://www.bbc.co.uk/","", bbc_newsclean$clean_guid)
+bbc_newsclean$clean_guid <- gsub("news|sport|world|business|politics|entertainment|arts|football|gymnastics|technology", "", bbc_newsclean$clean_guid)
+bbc_newsclean$clean_guid <- gsub("[/]", "", bbc_newsclean$clean_guid)
+glimpse(bbc_newsclean$clean_guid)
+```
+
+Next, we assigned each article to a geographic region based on the `clean_guid` field.
+We then used `grepl` for pattern matching to check whether the `clean_guid` contained references to one of the regions: `Europe, UK, US, Latin America, Africa, Middle East, Asia, Australia`.
+For the articles whose GUID content didn't match with any of the regions, we assigned them to the `Others` category.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+bbc_newsclean$region[grepl("europe",  
+                           bbc_newsclean$clean_guid, 
+                           ignore.case = TRUE)] <- "Europe"
+
+#UK
+bbc_newsclean$region[grepl("\\buk\\b", 
+                           bbc_newsclean$clean_guid,
+                           ignore.case = TRUE)] <- "UK"
+
+#US
+bbc_newsclean$region[grepl("\\bus\\b", 
+                           bbc_newsclean$clean_guid,
+                           ignore.case = TRUE)] <- "US"
+
+#Latin America
+bbc_newsclean$region[grepl("latin-america", 
+                           bbc_newsclean$clean_guid,
+                           ignore.case = TRUE)] <- "Latin America"
+
+# Africa 
+bbc_newsclean$region[grepl("africa", 
+                           bbc_newsclean$clean_guid, 
+                           ignore.case = TRUE)] <- "Africa"
+
+# Middle East
+bbc_newsclean$region[grepl("middle-east", 
+                           bbc_newsclean$clean_guid, 
+                           ignore.case = TRUE)] <- "Middle East"
+
+# Asia
+bbc_newsclean$region[grepl("asia", 
+                           bbc_newsclean$clean_guid, 
+                           ignore.case = TRUE)] <- "Asia"
+
+# Australia 
+bbc_newsclean$region[grepl("australia", 
+                           bbc_newsclean$clean_guid, 
+                           ignore.case = TRUE)] <- "Australia"
+
+#Others
+bbc_newsclean$region[is.na(bbc_newsclean$region)] <- "Others"
+
+
+articles_per_region <- bbc_newsclean %>%
+  group_by(region) %>% 
+  summarise(articles_per_region = n()) %>%
+  arrange(articles_per_region)
+
+articles_per_region
+```
+
+We then summarised the number of articles per region and noticed that the `Others` category contained a disproportionately large number of articles, totaling `16,846`.
+To achieve a more precise categorization, we decided to examine other variables, specifically the `title` and `description`.
+After reviewing their content, we identified some recurrent region-related terms that could help us reassign many of the articles in the `Others` category to the predefined regions.
+Therefore, we created lists of region-related terms including countries, cities, nations, demonyms and other geographical terms that were frequently observed in the title and description of the articles.
+Next, we combined those region-related terms into regular expression patterns specific to each region.
+Using stringi's `stri_detect_regex`, we detected the occurrences of those region-specific terms in the title and description of the articles independent of letter case.
+After doing so, we recalculated the number of articles per region and found that articles' count in the `Others` category decreased from `16,846` to `5,557`.
+Finally, we created a bar chart to visualize this regional distribution:
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include= FALSE}
+articles_per_region <- bbc_newsclean %>%
+  group_by(region) %>% 
+  summarise(articles_per_region = n()) %>%
+  arrange(articles_per_region)
+
+articles_per_region
+```
+
+```{r echo=FALSE, message= FALSE, warning= FALSE, include= FALSE}
+others_rows <- bbc_newsclean$region == "Others"
+
+library(stringi)
+
+#Europe
+eu_terms <- c("europe", "Ukraine", "Mariupol", "Kyiv","russia",
+              "france", "paris", "monaco" , "germany", "italy", 
+              "spain", "poland", "netherlands", "sweden", "norway", 
+              "finland", "denmark", "belgium", "zeebrugge", 
+              "switzerland", "ireland", "portugal", "greece", 
+              "croatia", "romania", "bulgaria", "slovakia", 
+              "slovenia", "hungary")
+
+eu_pattern <- stri_paste("(", stri_c(eu_terms, collapse = "|") , ")")
+
+eu_matches <- stri_detect_regex(bbc_newsclean$text, eu_pattern, case_insensitive = TRUE)
+rows_to_update <- others_rows & eu_matches
+
+bbc_newsclean$region[rows_to_update] <- "Europe"
+
+
+
+#UK
+
+uk_terms <- c("uk", "united kingdom", "britain", "british",
+              "england", "english", "scotland", "scottish",
+              "wales", "welsh", "northern ireland","Bath",
+              "Birmingham","Bradford","Brighton and Hove",
+              "Brighton","Cambridge","Canterbury","Carlisle",
+              "Chelmsford","Chester","Chichester","Colchester",
+              "Coventry","Derby","Doncaster","Durham","Ely",
+              "Exeter","Gloucester","Hereford","Hull","Kingston upon Hull",
+              "Lancaster","Leeds","Leicester","Lichfield","Lincoln",
+              "Liverpool","London","Manchester","Milton Keynes",
+              "Newcastle upon Tyne","Newcastle","Norwich","Nottingham",
+              "Oxford","Peterborough","Plymouth","Portsmouth","Preston",
+              "Ripon","Salford","Salisbury","Sheffield","Southampton",
+              "Southend","Southend-on-Sea","St Albans","Stoke-on-Trent",
+              "Stoke","Sunderland","Truro","Wakefield","Wells","Westminster",
+              "Winchester","Wolverhampton","Worcester","York")
+
+
+uk_pattern <- stri_paste("(", stri_c(uk_terms, collapse = "|") , ")")
+
+uk_matches <- stri_detect_regex(bbc_newsclean$text, uk_pattern, case_insensitive = TRUE)
+rows_to_update <- others_rows & uk_matches
+
+bbc_newsclean$region[rows_to_update] <- "UK"
+
+
+
+#US
+
+us_terms <- c("us", "usa", "america", "canada", 
+              "north america", "united states")
+
+
+us_pattern <- stri_paste("(", stri_c(us_terms, collapse = "|") , ")")
+
+us_matches <- stri_detect_regex(bbc_newsclean$text, us_pattern, case_insensitive = TRUE)
+rows_to_update <- others_rows & us_matches
+
+bbc_newsclean$region[rows_to_update] <- "US"
+
+
+#Latin America
+
+latin_terms <- c("latin america", "south america", 
+                 "mexico", "brazil", "argentina")
+
+latin_pattern <- stri_paste("(", stri_c(latin_terms, collapse = "|") , ")")
+
+latin_matches <- stri_detect_regex(bbc_newsclean$text, latin_pattern, case_insensitive = TRUE)
+rows_to_update <- others_rows & latin_matches
+
+bbc_newsclean$region[rows_to_update] <- "Latin America"
+
+
+# Africa 
+
+africa_terms <- c("africa", "nigeria", "kenya", "ethiopia", 
+                  "south africa", "egypt", "morocco", "ghana", 
+                  "tanzania", "uganda", "algeria", "tunisia", 
+                  "libya", "sudan", "somalia","angola", "zimbabwe", 
+                  "rwanda", "senegal", "cameroon", "ivory coast", 
+                  "botswana")
+
+africa_pattern <- stri_paste("(", stri_c(africa_terms, collapse = "|") , ")")
+
+africa_matches <- stri_detect_regex(bbc_newsclean$text, africa_pattern, case_insensitive = TRUE)
+rows_to_update <- others_rows & africa_matches
+
+bbc_newsclean$region[rows_to_update] <- "Africa"
+
+
+
+# Middle East
+me_terms <- c("middle east", "iran", "iraq", "palestine", "gaza",
+              "syria", "lebanon", "jordan", "saudi", "saudi arabia",
+              "yemen", "qatar", "bahrain", "kuwait", "uae", 
+              "united arab emirates", "uae","oman", "turkey")
+
+me_pattern <- stri_paste("(", stri_c(me_terms, collapse = "|") , ")")
+
+me_matches <- stri_detect_regex(bbc_newsclean$text, me_pattern, case_insensitive = TRUE)
+rows_to_update <- others_rows & me_matches
+
+bbc_newsclean$region[rows_to_update] <- "Middle East"
+
+
+# Asia
+
+asia_terms <- c("asia", "india", "china", "japan", "korea", "south korea",
+                "north korea", "indonesia", "vietnam", "thailand", "pakistan",
+                "bangladesh", "philippines", "malaysia", "singapore", "taiwan")
+
+asia_pattern <- stri_paste("(", stri_c(asia_terms, collapse = "|") , ")")
+
+asia_matches <- stri_detect_regex(bbc_newsclean$text, asia_pattern, case_insensitive = TRUE)
+rows_to_update <- others_rows & asia_matches
+bbc_newsclean$region[rows_to_update] <- "Asia"
+
+
+# Australia 
+bbc_newsclean$region[others_rows & grepl("australia|new zealand", 
+                                         bbc_newsclean$text, 
+                                         ignore.case = TRUE)] <- "Australia"
+
+head(bbc_newsclean$region)
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include= FALSE}
+articles_per_region <- bbc_newsclean %>%
+  group_by(region) %>% 
+  summarise(articles_per_region = n()) %>%
+  arrange(articles_per_region)
+
+articles_per_region
+```
+
+```{r, fig.align='center', echo=FALSE, message=FALSE, warning= FALSE}
+ggplot(articles_per_region, 
+       aes(x= reorder(region, articles_per_region),
+           y= articles_per_region, fill = region)) + 
+  geom_col() + 
+  scale_colour_manual(values = cols) +
+  labs(title= "Number of articles by region", 
+       x= "Region", 
+       y=" Number of articles",
+       fill= "Region") +
+  theme_minimal() +
+  theme(plot.title= element_text(size=18, 
+                                 colour = "red",
+                                 face = "bold",
+                                 margin = unit(c(0, 0, 5, 0), "mm")),
+        axis.title.x= element_text(size=14, 
+                                   colour="green4",
+                                   face = "bold", 
+                                   margin = unit(c(5, 0, 0, 0), "mm")),
+        axis.title.y= element_text(size=14, 
+                                   colour="green4",
+                                   face = "bold", 
+                                   margin = unit(c(0, 5, 0, 0), "mm")),
+        axis.text.x = element_text(face = "bold", 
+                                   size=9, 
+                                   colour = "firebrick"),
+        axis.text.y = element_text(size=9, 
+                                   face = "bold", 
+                                   colour = "firebrick"),
+        legend.title= element_text(colour="darkblue",
+                                   face = "bold"),
+        legend.text= element_text(face = "bold")) +
+  scale_y_continuous(breaks = seq(0, 25000, 3000)) +
+  coord_flip()
+```
+
+=\> The plot shows how the number of articles varies by region.
+The `UK` has the highest number of articles at around 13,178.
+This is expected because the dataset is from BBC News UK. The `US` is the second largest region with 6,315 articles while the `Others` category trails close behind with about 5,557 articles.
+Further work can be done to reduce this number even more.
+For example, we may examine the articles and reclassify them into more specific regions by looking for redundant terms such as terms that have cultural references.
+The remaining regions: Europe, Middle East, Asia, Africa, Australia and Latin America have a much lower number of articles that doesn't exceed 3,000.
+
+The bar plot showed the quantitative distribution of the articles per region.
+To enhance our geographic analysis, we decided to plot a dynamic interactive map to visualize the `spatial distribution of countries`, with markers colored by their corresponding region.
+The map would give us a clear view of how the regions are distributed globally.
+To do so, we began by loading the world-country polygon dataset using `map_data("world")` from the `maps` package.
+Then using lists of regular expressions, we classified each country into one of the predefined regions (`Europe, UK, US, Latin America, Africa, Middle East, Asia, Australia`).
+The classification result was stored in a new column called `region_assigned`.
+Rows without an assigned region were removed.
+Then in the resulting dataframe `clean_mapdata`, we only kept the variables that we will need to plot the leaflet map: `long, lat, region and region_assigned`.
+Furthermore, to ensure that every region from the article dataset was represented, we joined the dataset with `articles_per_region`.
+Next, we grouped the data by `country` and summarized the `coordinates` for each country by calculating the `mean latitude` and the `mean longitude` so that each marker is placed on a single location.
+We also counted the number of countries per region and removed rows with missing values to ensure the mapping of valid locations.
+Finally we plotted the interactive leaflet map with one marker per country, where its color represents the region to which the country belongs.
+We also added popup information that displays the country name and its corresponding article count when we click on the country marker in the map.
+To eliminate the excessive white space introduced by HTML widgets in the PDF report, we exported the leaflet map widget as an image using `webshot2` and rendered it in the report using `knitr::include_graphics()`.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include= FALSE}
+#Data of all world countries
+
+mapdata <- map_data("world")
+
+view(mapdata)
+glimpse(mapdata)
+
+#Europe
+eu_matches <- stri_detect_regex(mapdata$region, eu_pattern, case_insensitive = TRUE)
+rows_to_update <- eu_matches
+
+mapdata$region_assigned[rows_to_update] <- "Europe"
+
+#UK
+uk_matches <- stri_detect_regex(mapdata$region, uk_pattern, case_insensitive = TRUE)
+rows_to_update <- uk_matches
+
+mapdata$region_assigned[rows_to_update] <- "UK"
+
+
+#US
+us_matches <- stri_detect_regex(mapdata$region, us_pattern, case_insensitive = TRUE)
+rows_to_update <- us_matches
+
+mapdata$region_assigned[rows_to_update] <- "US"
+
+
+#Latin America
+latin_matches <- stri_detect_regex(mapdata$region, latin_pattern, case_insensitive = TRUE)
+rows_to_update <- latin_matches
+
+mapdata$region_assigned[rows_to_update] <- "Latin America"
+
+
+# Africa 
+africa_matches <- stri_detect_regex(mapdata$region, africa_pattern, case_insensitive = TRUE)
+rows_to_update <- africa_matches
+
+mapdata$region_assigned[rows_to_update] <- "Africa"
+
+
+# Middle East
+me_matches <- stri_detect_regex(mapdata$region, me_pattern, case_insensitive = TRUE)
+rows_to_update <- me_matches
+
+mapdata$region_assigned[rows_to_update] <- "Middle East"
+
+
+# Asia
+asia_matches <- stri_detect_regex(mapdata$region, asia_pattern, case_insensitive = TRUE)
+rows_to_update <- asia_matches
+
+mapdata$region_assigned[rows_to_update] <- "Asia"
+
+
+# Australia
+mapdata$region_assigned[grepl("australia|new zealand", 
+                              mapdata$region, ignore.case = TRUE)] <- "Australia"
+
+# Remove NAs from region_assigned column
+
+clean_mapdata <- mapdata %>%
+  filter(!is.na(region_assigned)) %>%
+  select(region_assigned, region, long, lat)
+
+glimpse(clean_mapdata)
+
+# Right join 
+clean_mapdata <- right_join(clean_mapdata, 
+                            articles_per_region, 
+                            by = c("region_assigned" = "region"))
+
+view(clean_mapdata)
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+
+install.packages("webshot2", repos= "https://cran.r-project.org")
+
+countries <- clean_mapdata %>%
+  group_by(region) %>%
+  summarise(
+    lat = mean(lat, na.rm = TRUE),
+    long = mean(long, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  )
+
+countries <- countries %>% drop_na()
+view(countries)
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+
+library(leaflet)
+
+# Discrete palette
+pal <- colorFactor("viridis", levels = countries$region)
+
+# Leaflet map
+map <- leaflet(countries) %>%
+  addTiles() %>%
+  setView(lng = -3.7, lat = 40, zoom = 3) %>%
+  addCircleMarkers(data = countries, 
+                   color = ~pal(region),
+                   popup = ~paste0(
+      "<b>Country: </b>", region, "<br>",
+      "<b>Articles: </b>", n
+    ))
+
+
+# Save the map widget as an image
+
+library(htmlwidgets)
+library(webshot2)
+
+saveWidget(map, "leaflet_map.html", selfcontained = TRUE)
+webshot("leaflet_map.html", file = "leaflet_map.png", vwidth = 1200, vheight = 900)
+
+```
+
+```{r, echo=FALSE, fig.align='center', out.width="80%"}
+knitr::include_graphics("leaflet_map.png")
+```
+
+=\> We can observe that the UK and the US show the largest number of articles, followed by other European countries.
+In contrast, countries in regions such as Latin America, Africa, the Middle East, Asia, and Australia are underrepresented.
+This visual representation of the global spatial distribution of countries contributing to each region’s article count complements the information provided in the bar plot.
+
+Now, we decided to consider `Topic` as an additional variable for analysis.
+Our goal is to examine how the distribution of articles varies by topic and region over time using a time series plot.
+We began by calculating the top `four` most frequent topics and found that they are: `Politics, Other, Technology` and `Crime`.
+Next, we filtered the dataset to include only these topics and grouped the data by year, month, region, and topic.
+We then calculated the number of articles for each combination of year, month, region, and topic to get monthly article counts by region and topic.
+Finally we created the time series plot:
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include= FALSE}
+
+#Time series plot
+
+# Get top 4 topics
+
+top4_topics <- topic_counts %>%
+  arrange(desc(Freq)) %>%
+  slice_head(n = 4) %>%
+  pull(Var1)
+
+top4_topics
+
+#Summarize the article counts by region & topic per month
+
+monthly_region_topic_counts <- bbc_newsclean %>%
+  filter(topic %in% top4_topics) %>%
+  group_by(year, month, region, topic) %>%
+  summarise(article_count = n(), .groups = "drop")
+
+# Picked only specific regions
+monthly_region_topic_counts <- monthly_region_topic_counts %>% 
+  filter(region == "UK" | region == "US" | region == "Europe" |
+           region == "Middle East" | region == "Asia" )
+
+```
+
+```{r, fig.align='center', echo=FALSE, message=FALSE, warning= FALSE}
+
+#Time Series Plot 
+
+ggplot(monthly_region_topic_counts, aes(x= month, 
+                                        y= article_count, 
+                                        col= topic)) +
+  geom_line(size = 0.3) +
+  geom_point(size = 0.4) +
+  facet_wrap(~ region, scales="free_y") +
+  scale_x_date(date_labels= "%Y", date_breaks = "1 year") +
+  labs(
+    title = "Monthly region topic counts",
+    x = "Year",
+    y = "Number of Articles") +
+  theme_minimal() +
+  theme(
+  plot.title= element_text(size=18, 
+                           colour = "darkblue", 
+                           face= "bold",
+                           margin = unit(c(0, 0, 5, 0), "mm")),
+  axis.title.x= element_text(size=14, 
+                             colour="deeppink",
+                             face= "bold",
+                             margin = unit(c(5, 0, 0, 0), "mm")),
+  axis.title.y= element_text(size=14, 
+                             colour="deeppink", 
+                             face= "bold",
+                             margin = unit(c(0, 4, 0, 0), "mm")),
+  axis.text.x = element_text(face= "bold"),
+  axis.text.y = element_text(size=9, 
+                             face = "bold"),
+  legend.title= element_text(colour="deeppink",
+                             face = "bold"),
+  legend.text= element_text(face = "bold"),
+  strip.text = element_text(face = "bold", 
+                            color = "firebrick", 
+                            size = 12),
+  panel.spacing = unit(0.7, "cm")
+)
+
+```
+
+=\> We can observe that `Politics` is the most common topic across all regions, especially in the UK where it ranges from 100 to almost 200 articles per month.
+This is because BBC mainly focuses on UK politics.
+However, articles with topics: `Technology` and `Crime` have a much lower coverage.
+In Europe, we can see that the number of articles saw a steep decline from around 200 in early 2022 to around 50 by late 2022.
+The initial surge in articles count was likely due to the Russia-Ukraine conflict that began in February 2022.
+This event had a lot of coverage at the beginning.
+However, as the war continued, coverage decreased and the conflict no longer gathered as much attention.
+In the Middle East, we can observe a sharp spike in late 2023, reaching about 60 articles per month.
+This can be due to the Israel-Gaza conflict that began in October 2023.
+The US also shows a surge in the number of articles in mid-2024 where the articles count reached about 190.
+This is probably related to the 2024 presidential election campaigns.
+We can also see that the Others category features noticeable peaks in Asia towards the end of 2022 and in the Middle East in late 2023, coinciding with the politics surge during the Israel-Gaza conflict.
+This is likely because the Others category covers breaking news and events that don't fit the predefined topic categories (Politics, Technology, Crime etc..).
+This shows that further work can be put into the classification of the articles into additional topic categories such as `War`.
+
+## (D) Zipf’s Law
+
+This analysis moved from raw data to statistical proof.
+A rigorous statistical test of Zipf's Law was performed, counting word frequencies and fitting a linear model to the full data set.
+This process confirms the consistent, predictable structure of vocabulary use across the entire news archive, readying the data for advanced research.
+
+```{r, echo= FALSE, results = 'hide'}
+library(dplyr)
+library(tidyverse)
+library(tidytext)
+library(broom)
+library(lubridate)
+# Tokenize, count, and rank words within each topic category
+topic_word_frequencies <- bbc_newsclean %>% 
+  unnest_tokens(word, text) %>%
+  # Filter out very short noise tokens
+  filter(str_length(word) > 1) %>%
+  # Count frequency (n) grouped by topic
+  count(topic, word, sort = TRUE) %>%
+  group_by(topic) %>%
+  # Calculate Rank (r) for each word within its topic
+  mutate(rank = row_number()) %>%
+  # Apply log transformations for the linear plot
+  mutate(log_rank = log(rank), log_freq = log(n)) %>%
+  ungroup()
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+# Create the faceted Log-Log Plot
+plot_zipf_by_topic <- topic_word_frequencies %>%
+  ggplot(aes(x = log_rank, y = log_freq, color = topic)) + 
+  geom_point(alpha = 0.1, size = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.8) +
+  # Facet the plot to distinguish categories 
+  facet_wrap(~ topic, scales = "free") +
+  labs(
+    title = "Zipf's Law Across BBC News Topics",
+    x = expression(paste("Log(", Rank, ") within Topic")),
+    y = expression(paste("Log(", Frequency, ") within Topic")),
+    color = "Topic Category" # Legend label
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    legend.position = "bottom" # Display the color legend clearly
+  )
+print(plot_zipf_by_topic)
+```
+
+A visual plot was generated to prove the law **that frequency is inversely related to rank**.
+The plot shows a visible calculated linear trend line that is overlaid on each topic's data, showing how closely the data follows the expected straight-line pattern predicted by Zipf’s law.
+This demonstrates the consistent and predictable structure of vocabulary in the BBC news archive.
+
+Linear Model Fitting and Interpretation The goal is to mathematically determine the slope of the line that best fits the relationship between a word's rank and its frequency.
+The resulting coefficient is the definitive number proving how closely the entire collection of news articles adheres to the universal linguistic rule.
+It gives us a single, precise measure of the corpus's language structure.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+# Consolidate word counts for the overall corpus model
+overall_word_frequencies <- topic_word_frequencies %>%
+  group_by(word) %>%
+  summarise(n = sum(n), .groups = "drop") %>%
+  mutate(rank = row_number()) %>%
+  mutate(log_rank = log(rank), log_freq = log(n))
+
+# Fit the linear model: log(frequency) ~ log(rank)
+zipf_model <- lm(log_freq ~ log_rank, data = overall_word_frequencies)
+
+# Output the Tidy Model Summary for Report inclusion
+model_coefficients <- tidy(zipf_model)
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+library(knitr)
+# Print model coefficients in a table format
+model_coefficients %>%
+kable(caption = "Linear Model Coefficients (Full Corpus Fit)",
+format = "latex",
+digits = 3)
+```
+
+# (E) Sentiment Analysis of BBC News Articles
+
+In this section the **Bing sentiment lexicon** was applied to determine the overall emotional tone of BBC news articles between *2022 - 2024*.
+Furthermore we examined how sentiment varies across **time**, **topic**, **region**, and between **titles and descriptions**.
+Additional analysis identifies the most frequent **positive** and **negative** words.
+
+# **Data Preparation**
+
+```{r, include=FALSE, message=FALSE, warning=FALSE}
+bbc_news_sentiment <- bbc_newsclean %>%
+  select(clean_title, clean_description, text, date, topic, region) %>%
+  mutate(article_number = row_number(),
+         month = floor_date(date, "month")) %>%
+  unnest_tokens(word, text)
+
+cleaned_bbc_sentiment <- bbc_news_sentiment %>%
+  anti_join(stop_words)
+  
+nrow(bbc_news_sentiment)  #the data before removing stop words
+nrow(cleaned_bbc_sentiment) # the data after removing stop words
+
+bing <- get_sentiments("bing")
+
+BBCsentiment_words <- cleaned_bbc_sentiment %>%
+  inner_join(bing, by = "word")
+```
+
+# **Top 10 Most Frequent Words**
+
+```{r, echo=FALSE}
+cleaned_bbc_sentiment %>%
+  count(word, sort = TRUE) %>%
+  head(10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col(fill = "skyblue", color = "red") +
+  coord_flip() +
+  labs(title = "Top 10 Most Frequent Words in BBC Articles",
+       x = "Word", y = "Frequency") +
+  theme_minimal()
+```
+
+These are the most commonly occurring words after removing stop words, providing a preliminary overview of what we are about to analyse.
+
+# **Overall Sentiment**
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE,, include= FALSE, results = 'hide'}
+bing <- get_sentiments("bing")
+
+BBCsentiment_words <- cleaned_bbc_sentiment %>%
+  inner_join(bing, by = "word")
+BBCsentiment_words
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+overall_sentiment <- BBCsentiment_words %>%
+  count(sentiment)
+
+ggplot(overall_sentiment, aes(x = sentiment, y = n, fill = sentiment)) +
+  geom_col() +
+  scale_fill_manual(values = c("positive" = "darkgreen", "negative" = "red")) +
+  labs(title = "Overall Sentiment in BBC Articles", y = "Word Count") +
+  theme_minimal()
+```
+
+The overall sentiment distribution suggests that the dataset contains more negative sentiment than positive sentiment.
+
+# **Sentiment by Month**
+
+```{r, echo=FALSE}
+sentiment_by_month <- BBCsentiment_words %>%
+  filter(month >= as.Date("2022-01-01")) %>%
+  group_by(month, sentiment) %>%
+  summarise(n = n(), .groups = "drop")
+
+ggplot(sentiment_by_month, aes(x = month, y = n, color = sentiment)) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  scale_x_date(date_breaks = "3 months", date_labels = "%b %Y") +
+  labs(title = "Sentiment Trends Over Time", x = "Month", y = "Word Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The time-series plot shows that negative sentiment consistently outweighs positive sentiment in BBC news articles across the entire period of time.
+Negative word counts regularly exceeds 1,200 per month, while positive sentiment typically ranges between 700 and 1,000 words.
+This pattern suggests that the general BBC news reports during this time period leans more towards negatively framed content.
+
+Both sentiment categories show noticeable fluctuations month-to-month, in response to major news events, however negative sentiment shows much larger peaks, reflecting the dominance of conflict- and crisis-related reporting.Positive sentiment remains more stable with smaller month-to-month changes.
+The sharp decline in the final month is due to fewer available articles rather than a real shift in tone.
+
+Overall, the trend illustrates that while BBC coverage includes both positive and negative language, the negative tone is consistently stronger, reflecting the nature of global news reporting.
+
+### **Sentiment by Topic**
+
+```{r, echo=FALSE}
+sentiment_by_topic <- BBCsentiment_words %>%
+  group_by(topic, sentiment) %>%
+  summarise(n = n(), .groups = "drop")
+
+ggplot(sentiment_by_topic, aes(x = topic, y = n, fill = sentiment)) +
+  geom_col(position = "dodge") +
+  labs(title = "Sentiment Distribution by Topic",
+       x = "Topic", y = "Sentiment Word Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The sentiment distribution across BBC News topics reveals significant variation in emotional tone depending on the subject matter being covered.
+Topics like **Politics** and **Other** dominates the overall sentiment volume, showing the highest counts for both positive and negative words, however there is strong skew towards the negative sentiment.
+
+**Crime** is another topic with a strongly negative sentiment profile, which is expected given the nature of reporting involving violence and criminal events.
+
+Topics like **Business**, **Science**, and **Entertainment** have lower sentiment counts overall and appear more neutral, though still slightly skewed to the negative.
+This suggests that reporting in these areas tends to be more factual or event-driven.
+The **Health** topic shows a moderate level of sentiment, with negative words appearing more frequently than positive ones.
+Because health-related reporting often focuses on issues such as disease outbreaks, public health risks, and healthcare system pressures, this negative skewed sentiment is expected.
+
+**Sports** stands out as the only area where positive sentiment slightly outweighs the negative, this can likely be attributed to the achievement-oriented nature of sports reporting.
+**Technology** show moderate sentiment volumes, suggesting balanced but still negative-leaning reporting.
+
+Overall across topics, negative sentiment consistently exceeds positive sentiment, which generally indicates that BBC News tends to report events with more negative emotional tone, likely because they cover more problem-oriented or impactful events.
+
+### **Sentiment by Region**
+
+```{r, echo=FALSE}
+sentiment_by_region <- BBCsentiment_words %>%
+  group_by(region, sentiment) %>%
+  summarise(n = n(), .groups = "drop")
+
+ggplot(sentiment_by_region, aes(x = region, y = n, fill = sentiment)) +
+  geom_col(position = "dodge") +
+  labs(title = "Sentiment Distribution by Region",
+       x = "Region", y = "Sentiment Word Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The sentiment distribution across regions shows a clear dominance of **negative sentiment in nearly all geographic areas**, indicating that BBC coverage tends to focus on challenging or conflict-driven events regardless of location.
+The **UK** has the highest sentiment counts overall, reflecting the largest volume of reporting, with a strong skew toward negative words.
+The **US**, **Europe**, and **Other** category also display strong negative sentiment.
+In contrast, regions such as Africa, Asia, and Australia have much lower sentiment counts overall, driven mainly by fewer articles rather than a major difference in tone.
+
+Across all regions, **negative sentiment consistently exceeds positive sentiment**, indicating that BBC news reporting is generally problem-oriented and emphasizes crisis-related events.
+
+### **Top Positive & Negative Words**
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, results = 'hide'}
+top_positive <- BBCsentiment_words %>%
+  filter(sentiment == "positive") %>%
+  count(word, sort = TRUE) %>%
+  head(10)
+
+top_negative <- BBCsentiment_words %>%
+  filter(sentiment == "negative") %>%
+  count(word, sort = TRUE) %>%
+  head(10)
+```
+
+```{r, fig.tight, fig.width=6, fig.height=4, fig.pos='h', fig.align='center', echo=FALSE}
+ggplot(top_positive, aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Top 10 Positive Words", x = "Word", y = "Count") +
+  theme_minimal()
+
+ggplot(top_negative, aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "tomato") +
+  coord_flip() +
+  labs(title = "Top 10 Negative Words", x = "Word", y = "Count") +
+  theme_minimal()
+```
+
+These highlight which words contribute most to the sentiment classification.
+
+-   **Sentiment Wordcloud**
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+BBCsentiment_words2 <- BBCsentiment_words %>%
+  count(word, sort = TRUE) %>%
+  mutate(freq = n / sum(n))
+
+par(mar = c(2,2,2,2))
+with(BBCsentiment_words2,
+     wordcloud(word, freq, min.freq = 1, max.words = 100,
+               random.order = FALSE, colors = brewer.pal(8, "Dark2"),
+               scale = c(4.5, 0.5)))
+title(main = "Wordcloud for BBC News Articles", cex.main = 1.2)
+```
+
+The wordcloud visually emphasises the most frequently occurring sentiment-bearing words.
+
+### **Title vs Description Sentiment**
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, results = 'hide'}
+title_sentiment <- bbc_newsclean %>%
+  unnest_tokens(word, clean_title) %>%
+  inner_join(bing, by = "word") %>%
+  count(sentiment)
+
+description_sentiment <- bbc_newsclean %>%
+  unnest_tokens(word, clean_description) %>%
+  inner_join(bing, by = "word") %>%
+  count(sentiment)
+```
+
+```{r, echo=FALSE}
+bind_rows(
+  title_sentiment %>% mutate(source = "Title"),
+  description_sentiment %>% mutate(source = "Description")
+) %>%
+  ggplot(aes(x = sentiment, y = n, fill = sentiment)) +
+  geom_col() +
+  facet_wrap(~source) +
+  labs(title = "Sentiment in Title vs Description", x = "Sentiment", y = "Word Count") +
+  scale_fill_manual(values = c("positive" = "darkgreen", "negative" = "red")) +
+  theme_minimal()
+```
+
+The comparison of sentiment between BBC news titles and descriptions shows a consistent dominance of negative sentiment across both text fields, but with some notable differences in proportion.
+**Descriptions** contain the highest negative word count, with values approaching **20,000** words.
+Positive sentiment in descriptions, while present, is notably lower, sitting around the **17,000** words, indicating that the descriptive text of BBC articles uses considerably more negative sentiment terms overall.
+
+**Titles** however more sharply negative than descriptions.
+They exhibit a stronger skew towards the negative sentiment, with negatives words sitting around **17,000** words and the positive sentiments sitting just roughly around **10,000**.
+
+Titles often use stronger language to attract readers, while descriptions may contain more balanced wording; this comparison shows the difference clearly.
+
+\newpage
+
+## Question 2
+
+## (A) Data Import and Integration
+
+The first step in this study was to combine together air quality data from the two Plymouth monitoring sites Plymouth Centre(PLYM) and Tavistock Road(PLYR) covering 2020 to 2025.
+Each year’s data came in a separate CSV file, with some metadata at the top that was skipped to focus only on the measurements.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include= FALSE}
+library(tidyverse)
+library(readr)
+library(janitor)
+library(scales)
+
+# List all CSV files
+files <- list.files(pattern = "\\.csv$", full.names = TRUE)
+
+# Read each file, ensuring all meta data is skipped
+data_list <- lapply(files, function(x){
+  read_csv(x, skip = 4) %>% 
+    clean_names() %>% 
+    mutate(source_file = basename(x))
+})
+# Combine into a single dataset
+air_data <- bind_rows(data_list)
+```
+
+We extracted the year from the source file and a year column was created from the file names to make temporal analysis easier.
+The date column was also converted into a proper Date format for consistency.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include= FALSE}
+# Extract year from source file and create a column for year
+air_data <- air_data %>%
+  mutate(year = str_extract(source_file, "\\d{4}"))
+
+
+head(air_data)
+colnames(air_data)
+
+air_data$date <- as.Date(air_data$date, format = "%d-%m-%Y")
+```
+
+To make the dataset ready for analysis, we reshaped it into a long format, pairing each pollutant measurement with its corresponding status and unit.
+Negative values, which are physically impossible, were replaced with NA.
+Finally, pollutant names were simplified using short codes like NO, NO$_2$, PM$_{2.5}$, and O$_3$ to make the dataset easier to work with.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include= FALSE}
+df <- air_data
+
+# Identify the ID columns
+id_cols <- c("date", "time", "year", "source_file")
+
+# All other columns are pollutant + status + unit
+cols <- setdiff(names(df), id_cols)
+
+# We now identify pollutant columns as those NOT starting with status_ or unit_
+pollutant_cols <- cols[!str_detect(cols, "^status_|^unit_")]
+
+# We will pair each pollutant with the NEXT TWO columns (status & unit)
+air_long <- map_dfr(pollutant_cols, function(pol) {
+  
+  # find the position of the pollutant column
+  i <- which(names(df) == pol)
+  
+  # status and unit should be next 2 columns
+  status_col <- names(df)[i + 1]
+  unit_col   <- names(df)[i + 2]
+  
+  df %>%
+    transmute(
+      date,
+      time,
+      year,
+      source_file,
+      pollutant = pol,
+      value     = .data[[pol]],
+      status    = if (status_col %in% names(df)) .data[[status_col]] else NA,
+      unit      = if (unit_col   %in% names(df)) .data[[unit_col]]   else NA
+    )
+})
+
+any(air_long$value < 0, na.rm = TRUE)
+sum(air_long$value < 0, na.rm = TRUE)
+
+air_long %>% 
+  filter(value < 0)
+
+air_long <- air_long %>%
+  mutate(value = ifelse(value < 0, NA, value))
+
+air_long <- air_long %>%
+  mutate(pollutant_short = case_when(
+    str_detect(pollutant, "nitric_oxide") ~ "NO",
+    str_detect(pollutant, "nitrogen_dioxide") ~ "NO2",
+    str_detect(pollutant, "nitrogen_oxides_as_nitrogen_dioxide") ~ "NOx",
+    str_detect(pollutant, "pm_sub_10") ~ "PM10",
+    str_detect(pollutant, "non_volatile_pm_sub_2_5") ~ "PM2.5_NV",
+    str_detect(pollutant, "volatile_pm_sub_2_5") ~ "PM2.5_V",
+    str_detect(pollutant, "pm_sub_2_5") ~ "PM2.5",
+    str_detect(pollutant, "ozone") ~ "O3",
+    TRUE ~ pollutant
+  ))
+
+head(air_long, 2)
+
+```
+
+## (B) Numerical and Graphical Summaries
+
+### 1) Numerical Summaries
+
+First we started by selecting three indicators: **NO, NO**$_2$ and O$_3$.
+Then we calculated the numerical summary of our data:
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+
+indicators <- c("NO", "NO2", "O3")
+
+air_summary <- air_long %>%
+  filter(pollutant_short %in% indicators) %>%
+  group_by(pollutant_short) %>%
+  summarise(
+    mean_value = mean(value, na.rm = TRUE),
+    median_value = median(value, na.rm = TRUE),
+    min_value = min(value, na.rm = TRUE),
+    max_value = max(value, na.rm = TRUE),
+    sd_value = sd(value, na.rm = TRUE),
+    na_value = sum(is.na(value)))
+
+air_summary
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+library("knitr")
+kable(air_summary, caption = "Summary of Air Quality Indicators")
+```
+
+=\> Among the pollutants, we can observe that O$_3$ exhibits the highest mean concentration: $52.5~\mu\text{g/m}^3$.
+This is likely due to the fact that O$_3$ is created in the atmosphere through chemical reactions rather than being released directly from vehicles or industry.
+NO$_2$ displays the highest variability with a standard deviation = $25.2~\mu\text{g/m}^3$.
+This may be due to variability in vehicle emissions throughout the day.
+Furthermore, O$_3$ also displays considerable variation with a standard deviation = $22.4~\mu\text{g/m}^3$.
+This is likely due to changing weather conditions.
+Ozone formation needs sunlight and in summer and spring, sunlight is more intense which leads to high concentrations during those seasons.
+The minimum concentration of all three pollutants is 0 which means that there are some periods where concentrations were not detected or were below detection limits.
+This may occur during times of low emissions.
+The concentration of NO$_2$ peaks at $907.4~\mu\text{g/m}^3$ which is dramatically above its average of $19.3~\mu\text{g/m}^3$ by approximately 47 times.
+This indicates that there were occasional periods of severe pollution such as during rush hour periods where traffic emission reaches critically high levels.
+
+### (B) Graphical summaries:
+
+### 1- Histograms for indicator values:
+
+First we created a location column that takes the values `PLYM` and `PLYR` then we plotted the histograms that exhibit how pollutants levels vary in both locations:
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+
+# Create a location column: 
+air_long <- air_long %>%
+  mutate(location = case_when(
+    str_detect(source_file, "PLYM") ~ "PLYM",
+    str_detect(source_file, "PLYR") ~ "PLYR"
+  ))
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+
+library(ggtext)
+
+ggplot(air_long %>% 
+         filter(pollutant_short %in% indicators),
+       aes(x= value, fill = location)) +
+  geom_histogram(alpha= 0.6, bins = 30) +
+  scale_x_log10(labels = scales::comma) +
+  facet_grid(location ~ pollutant_short, scales= "free") +
+  theme_minimal() +
+  labs(title = "Distribution of pollutant concentrations by location",
+       x = expression(bold("Concentration (" * mu * "g/m"^3 * ")")),
+       y = "Frequency") +
+  theme(plot.title= element_text(size=15, 
+                                 colour = "#FF6EB4", 
+                                 face = "bold",
+                                 margin = unit(c(0, 0, 5, 0), "mm")),
+        axis.title.x= element_text(size=15, 
+                                   colour="#00B2EE",
+                                   face = "bold"),
+        axis.title.y= element_text(size=15, 
+                                   colour="#00B2EE",
+                                   face = "bold",
+                                   margin = unit(c(0, 3, 0, 0), "mm")),
+        axis.text.x = element_text(face = "bold", 
+                                   size=11,
+                                   angle = 35),
+        axis.text.y = element_text(size=11, 
+                                   face = "bold"),
+        legend.title= element_text(colour="darkblue",
+                                   face = "bold.italic",
+                                   size= 12),
+        legend.text= element_text(face = "bold"),
+        strip.text = ggtext::element_markdown(size = 12, 
+                                              face = "bold",
+                                              colour = "violetred3"),
+          panel.spacing = unit(0.7, "cm")
+
+    )
+```
+
+=\> The histograms show a log-normal distribution for the pollutants **NO** and **NO**$_2$ in both locations.
+**NO** concentrations are slightly higher in **PLYR** than in **PLYM**.
+We can conclude that **PLYR** has higher **NO** pollution.
+When it comes to **NO**$_2$, its concentration reaches a peak around $10~\mu\text{g/m}^3$ in both locations.
+However for **O**$_3$, only PLYM has measurements in the dataset.
+In PLYM, we can observe moderate **O**$_3$ concentrations with a peak at around $30~\mu\text{g/m}^3$.
+Despite the fact that NO reacts with and destroys ozone through the NO titration effect, the moderate O3 concentrations that we're seeing indicate that photochemical ozone production from **NO**$_2$ also takes place.
+This creates a balance between ozone formation and destruction in PLYM.
+
+### 2-Boxplots by indicator:
+
+Then we plotted boxplots that show us how pollutant concentrations vary by location:
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+ggplot(
+  air_long %>% filter(pollutant_short %in% indicators),
+  aes(x = pollutant_short, y = value, fill = location)
+  ) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outlier.alpha = 0.6) +
+  scale_y_log10(labels = scales::comma) +
+  labs(
+    title = "Pollutant levels by location",
+    x = "Pollutant",
+    y = expression(bold("Concentration (" * mu * "g/m"^3 * ")")),
+    fill = "Location") +
+  theme_minimal() +
+  theme(plot.title= element_text(size=18,
+                                 colour = "royalblue3", 
+                                 face = "bold",
+                                 margin = unit(c(0, 0, 5, 0), "mm")),
+        axis.title.x= element_text(size=15, 
+                                   colour="green3",
+                                   face = "bold",
+                                   margin = unit(c(4, 0, 0, 0), "mm")),
+        axis.title.y= element_text(size=15, 
+                                   colour="green3",
+                                   face = "bold",
+                                   margin = unit(c(0, 5, 0, 0), "mm")),
+        axis.text.x = element_text(face = "bold", 
+                                   size=11,
+                                   colour = "brown"),
+        axis.text.y = element_text(size=11, 
+                                   face = "bold",
+                                   colour = "brown"),
+        legend.title= element_text(colour="#8B1A1A",
+                                   face = "bold.italic", 
+                                   size= 12),
+        legend.text= element_text(face = "bold")
+      )
+```
+
+=\> We can observe that NO's median in PLYR is higher than in PLYM.
+For NO$_2$, the medians are very close, with PLYR being slightly higher.
+This is likely caused by vehicle and industrial emissions.
+For NO$_2$, both regions show that there are outliers above and below the boxes.
+High outliers suggest occasional surges in NO$_2$ levels that may lead to dangerous pollution levels in both locations.
+Low NO$_2$ concentration levels indicate periods with very clean air.
+For O$_3$, the median is around $55~\mu\text{g/m}^3$ with a lot of low outliers.
+This may indicate periods with little Ozone in PLYM.
+
+### 3- Monthly Time series plots of regional averages:
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, include=FALSE}
+
+air_ts <- air_long %>%
+  filter(pollutant_short %in% indicators) %>%
+  mutate(month= floor_date(date, "month")) %>%
+  group_by(location, month, pollutant_short) %>%
+  summarise(avg_value = mean(value, na.rm = TRUE), .groups = "drop")
+```
+
+```{r, fig.align='center', fig.width=4, fig.height=5, echo=FALSE, message=FALSE, warning= FALSE}
+
+ggplot(air_ts, 
+       aes(x = month, y = avg_value, color = pollutant_short)) +
+  geom_line(size= 1) +
+  facet_wrap(~location, ncol = 1) +
+  labs(title = "Monthly average of pollutants by location",
+       x = "Month",
+       y = expression(bold("Average concentration (" * mu * "g/m"^3 * ")")),
+       color= "Pollutant")+
+  theme_minimal() +
+  theme(panel.spacing = unit(1.5, "lines"),
+        plot.title= element_text(size=16, 
+                                 colour = "red2", 
+                                 face = "bold",
+                                 margin = unit(c(0, 0, 5, 0), "mm")),
+        axis.title.x= element_text(size=15, 
+                                   colour="#8B2252",
+                                   face = "bold",
+                                   margin = unit(c(3, 0, 0, 0), "mm")),
+        axis.title.y= element_text(size=15, 
+                                   colour="#8B2252",
+                                   face = "bold",
+                                   margin = unit(c(0, 5, 0, 0), "mm")),
+        axis.text.x = element_text(face = "bold", 
+                                   size=11,
+                                   angle = 45, 
+                                   hjust = 1),
+        axis.text.y = element_text(size=11, 
+                                   face = "bold"),
+        legend.title= element_text(colour="darkblue",
+                                   face = "bold.italic",
+                                   size= 12),
+        legend.text= element_text(face = "bold.italic"),
+        strip.text = ggtext::element_markdown(size = 12, 
+                                              face = "bold",
+                                              color="blue")
+        )
+
+```
+
+=\> The time series plot represents the monthly average of pollutants by location.
+We can observe that O$_3$ which was only measured in PLYM has the highest mean values ranging between $40~\mu\text{g/m}^3$ and $70~\mu\text{g/m}^3$.
+As for NO$_2$, we can see that it was relatively stable in PLYM with its average concentration slightly fluctuating between $10~\mu\text{g/m}^3$ and $30~\mu\text{g/m}^3$.
+However, in PLYR, NO$_2$'s mean concentration varies from year to year and reaches a peak of $60~\mu\text{g/m}^3$ in 2024.
+We also observe that NO's average concentration stays low in both regions at around 0 to $10~\mu\text{g/m}^3$ throughout the years.
+
+### 4- Bar charts for selected years:
+
+Later we plotted the bar chart of showing the variation of the average pollutant levels by year :
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+air_long$year <- as.Date(paste0(air_long$year, "-01-01"))
+
+ggplot(air_long %>%
+         filter(pollutant_short %in% indicators)%>% 
+         group_by(location, year, pollutant_short) %>% 
+         summarise(avg_value = mean(value, na.rm= TRUE), .groups = "drop"),
+       aes(x=year , y=avg_value, fill = location)) + 
+  geom_col(position = "dodge") +
+  facet_wrap(~pollutant_short, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Average pollutant levels by year",
+       x = "Year",
+       y = "Average Value",
+       fill = "Location") +
+  theme(plot.title= element_text(size=18, 
+                                 colour = "firebrick", 
+                                 face = "bold"),
+        axis.title.x= element_text(size=15, 
+                                   colour="chocolate3",
+                                   face = "bold",
+                                   margin = unit(c(3, 0, 0, 0), "mm")),
+        axis.title.y= element_text(size=15, 
+                                   colour="chocolate3",
+                                   face = "bold",
+                                   margin = unit(c(3, 5, 0, 0), "mm")),
+        axis.text.x = element_text(face = "bold", 
+                                   size=10),
+        axis.text.y = element_text(size=11, 
+                                   face = "bold"),
+        legend.title= element_text(colour="darkblue",
+                                   face = "bold.italic",
+                                   size= 12),
+        legend.text= element_text(face = "bold"),
+        strip.text = ggtext::element_markdown(size = 12, 
+                                              face = "bold",
+                                              color="#EE9A00")
+        )
+
+```
+
+=\> The bar plot shows us the average pollutant levels by year.
+NO shows higher average in PLYR than in PLYM across the years.
+In addition, NO average concentration in PLYR surges in 2023 reaching around $9~\mu\text{g/m}^3$ then declines towards 2025.
+For NO$_2$, we can observe that both PLYM and PLYR show similar patterns with relatively stable average values throughout the period.
+As for O$_3$, the average values measured in PLYM are relatively stable throughout the years at around $50~\mu\text{g/m}^3$.
+Overall, we can see that both NO and NO$_2$ are decreasing from 2023 to 2025 at both locations.
+This may indicate an improvement in air quality that is perhaps due to better emission controls or reduced traffic and industrial activity.
+
+## (c) Detailed Analysis of a pollutant
+
+For this analysis, nitrogen dioxide (NO$_2$) has been selected as the pollutant of interest.
+The choice of NO$_2$ is deliberate and based on its strong relevance to urban air quality, human health, and traffic emissions, making it particularly informative for a study comparing Plymouth Centre (urban background) and Tavistock Road (traffic-influenced) sites.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+# Create a location column: 
+air_data <- air_data %>%
+  mutate(location = case_when(
+    str_detect(source_file, "PLYM") ~ "PLYM",
+    str_detect(source_file, "PLYR") ~ "PLYR"
+  ))
+
+ # Time series plot for NO2
+ggplot(air_data, aes(x = date, y = nitrogen_dioxide, colour = location)) +
+  geom_line(alpha = 0.6) +
+  labs(
+    title = "Nitrogen Dioxide (NO₂) Levels Over Time (2020–2025)",
+    subtitle = "Comparison of Plymouth Centre (Urban Background) and Tavistock Road (Traffic)",
+    x = "Date",
+    y = "NO₂ concentration (µg/m³)",
+    colour = "Monitoring Site"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10),
+    legend.position = "bottom"
+  )
+```
+
+The NO$_2$ time-series plot shows several important long-term trends and short-term anomalies.
+A clear downward shift appears in early 2020, representing a sudden drop in NO$_2$ levels at both monitoring sites.
+This is consistent with the COVID-19 lockdown period, when traffic volumes were drastically reduced and emissions temporarily declined.
+Following this anomaly, concentrations gradually rise through late 2020 and 2021 as normal activity resumes, highlighting a recovery trend driven by increased vehicle movement.
+From 2022 onward, the series becomes more stable, showing no further abrupt shifts but displaying the expected seasonal pattern: higher values during winter months due to poorer atmospheric dispersion, and lower concentrations in summer when the atmosphere mixes more effectively.
+
+Short-term spikes are more visible at Tavistock Road, reflecting intermittent bursts of traffic or unfavourable weather conditions that trap pollutants near ground level.
+These spikes stand out as small but frequent anomalies compared with the smoother profile at Plymouth Centre.
+Overall, the plot reveals three key patterns: a major sudden reduction linked to lockdowns, a medium-term upward trend as emissions return, and recurring seasonal cycles that shape regular rises and falls in NO$_2$ concentrations across the year.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+# Create monthly averages
+no2_monthly <- air_data %>%
+  group_by(location, year = year(date), month = month(date)) %>%
+  summarise(no2_mean = mean(nitrogen_dioxide, na.rm = TRUE), .groups = "drop") %>%
+  mutate(date = ymd(paste(year, month, 15, sep = "-")))  # middle of month for plotting
+```
+
+The code takes the raw air-quality dataset and converts it into monthly averages of NO$_2$ for each monitoring site.
+It groups the data by site, year, and month, then calculates the mean nitrogen dioxide level for each group while ignoring missing values.
+After summarising, it creates a new date set to the 15th of each month, giving each monthly data point a consistent position on the timeline for plotting.
+The result is a clean dataset (no2_monthly) that contains one averaged NO$_2$ value per site per month, ready for visualisation or further analysis.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, no2_plot, dev="png", dpi=300, fig.width=10, fig.height=6, fig.pos='H'}
+ggplot(no2_monthly, aes(x = date, y = no2_mean, colour = location)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 1.5, alpha = 0.7) +
+  scale_x_date(date_labels = "%b-%Y", date_breaks = "6 months") +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0,0.05))) +
+  scale_colour_manual(values = c("PLYM" = "forestgreen", "PLYR" = "darkorange"),
+                      labels = c("PLYM" = "Plymouth Centre", "PLYR" = "Tavistock Road")) +
+  labs(
+    title = "Monthly Average Nitrogen Dioxide (NO2) Levels in Plymouth (2020–2025)",
+    subtitle = "Comparison of urban background vs traffic site",
+    x = "Date",
+    y = expression(NO[2] ~ " concentration (µg/m³)"),
+    colour = "Monitoring Site"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top",
+    legend.title = element_text(face = "bold")
+  )
+```
+
+The plot shows daily nitrogen dioxide (NO$_2$) concentrations from 2020 to 2025 at two monitoring sites: **Plymouth Centre** (urban background) and **Tavistock Road** (traffic).
+Across the entire period, **Tavistock Road consistently records higher and more variable NO**$_2$ levels, with frequent peaks above 10 µg/m³, reflecting the influence of vehicle emissions.
+In contrast, **Plymouth Centre shows lower and more stable concentrations**, typical of an urban background location.
+Although both sites display short-term fluctuations and seasonal patterns, the roadside site remains noticeably higher throughout.
+Overall, the plot highlights a persistent difference between traffic-related and background air quality, with traffic emissions being the main driver of elevated NO$_2$ levels at Tavistock Road.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+# Select related indicators and pivot to long format
+no_compare <- air_data %>%
+  select(date, location, nitric_oxide, nitrogen_dioxide, nitrogen_oxides_as_nitrogen_dioxide) %>%
+  pivot_longer(
+    cols = c(nitric_oxide, nitrogen_dioxide, nitrogen_oxides_as_nitrogen_dioxide),
+    names_to = "pollutant",
+    values_to = "value"
+  ) %>%
+  # aggregate monthly to reduce clutter
+  mutate(year = year(date), month = month(date)) %>%
+  group_by(location, pollutant, year, month) %>%
+  summarise(value_mean = mean(value, na.rm = TRUE), .groups = "drop") %>%
+  mutate(date = ymd(paste(year, month, 15, sep = "-")))
+```
+
+This code reshapes and aggregates the nitrogen-based pollutant data for comparison.
+It selects NO, NO$_2$, and NOx along with the site and datetime, then converts the data from wide to long format, creating a `pollutant` column and a `value` column.
+The data are grouped by site, pollutant, year, month, and monthly mean values are calculated to reduce noise from hourly measurements.
+Finally, a mid-month date is generated for plotting.
+This process produces a tidy, long-format dataset that is ideal for creating comparative time-series plots of multiple pollutants across sites.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE, dev="png", dpi=300, fig.width=10, fig.height=6, fig.pos='H'}
+ggplot(no_compare, aes(x = date, y = value_mean, colour = pollutant)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 1.2, alpha = 0.6) +
+  facet_wrap(~ location, scales = "free_y") +
+  scale_x_date(date_labels = "%b-%Y", date_breaks = "6 months") +
+  scale_colour_manual(values = c("nitric_oxide" = "#1f78b4",
+                                 "nitrogen_dioxide" = "#33a02c",
+                                 "nitrogen_oxides_as_nitrogen_dioxide" = "#e31a1c"),
+                      labels = c("NO", "NO2", "NOx")) +
+  labs(
+    title = "Comparative Time Series: NO, NO2, and NOx in Plymouth (2020–2025)",
+    subtitle = "Traffic (Tavistock Road) vs Urban Background (Plymouth Centre)",
+    x = "Date",
+    y = "Concentration (µg/m³)",
+    colour = "Pollutant"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top",
+    legend.title = element_text(face = "bold")
+  )
+```
+
+The graph illustrates the time series of air pollutants—Nitric Oxide (NO), Nitrogen Dioxide (NO$_2$), and Nitrogen Oxides as NO$_2$ (NOx)—in Plymouth from April 2020 to April 2025, comparing two monitoring sites: Plymouth Centre (urban background) and Tavistock Road (traffic-related pollution).
+
+At Tavistock Road, NO concentrations are consistently higher, correlating strongly with traffic emissions.
+The observed peaks align with increased vehicular activity, indicating the need for effective traffic management strategies.
+A downward trend in NO levels suggests potential improvements in air quality, possibly due to regulatory efforts.
+
+The NOx measurements mirror the trends of NO and NO$_2$, highlighting the significant impact of traffic on urban air quality.
+Overall, the data points to substantial differences in pollution levels between the two sites and emphasizes the importance of continued monitoring and targeted interventions to enhance air quality in Plymouth.
+
+## (D) Sliding-Window Correlation Analysis of Pollutants
+
+To explore how relationships between pollutants change over time, we applied a 30-day sliding window to daily-averaged concentrations of NO, NO$_2$, PM$_{2.5}$, and O$_3$.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+library(tidyverse)
+library(lubridate)
+library(slider) 
+
+# Selecting pollutants of interest
+selected_pol <- c("NO", "NO2", "PM2.5", "O3")
+
+# Filter and reshape data to wide format keeping only selected pollutants
+cor_data <- air_long %>%
+  filter(pollutant_short %in% selected_pol) %>%
+  group_by(date, pollutant_short) %>%
+  summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = pollutant_short, values_from = value) # each pollutant has its own column (wide format)
+
+# order data by date 
+cor_data <- cor_data %>%
+  arrange(date)
+
+# Define sliding window size
+# 30-day window, approximately one month
+window_size <- 30
+
+# Apply sliding window correlation
+# - For each window, correlation matrix of selected pollutants is calculated
+cor_results <- slider::slide(
+  .x = cor_data,
+  .f = ~ cor(.x %>% select(-date), use = "pairwise.complete.obs"),
+  .before = window_size,
+  .complete = TRUE
+)
+
+# Correlation matrices is combined with corresponding dates 
+cor_df <- tibble(
+  date = cor_data$date,
+  cor_matrix = cor_results
+)
+
+# Correlation matrices are converted into tidy long format 
+tidy_cor <- cor_df %>%
+  filter(!map_lgl(cor_matrix, is.null)) %>%
+  mutate(
+    cor_table = purrr::map(cor_matrix, ~ {
+      cm <- as.data.frame(.x)
+      cm$var1 <- rownames(cm)
+      cm %>%
+        pivot_longer(cols = -var1, names_to = "var2", values_to = "correlation")
+    })
+  ) %>%
+  select(date, cor_table) %>%
+  unnest(cor_table) %>%
+  filter(var1 != var2) %>%   # remove self-correlation
+  filter(var1 < var2)        # keep only unique pairs
+```
+
+```{r, fig.align='center', echo=FALSE, message=FALSE, warning= FALSE}
+
+# Heatmap of sliding correlations
+library(ggplot2)
+ggplot(tidy_cor, aes(x = date, y = interaction(var1, var2), fill = correlation)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red", midpoint = 0, limits = c(-1, 1)
+  ) +
+  labs(
+    title = "Sliding-Window Correlations Between Pollutants Over Time",
+    x = "Date",
+    y = "Pollutant Pair",
+    fill = "Correlation"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 13.8, face = "bold")
+  )
+```
+
+=\> The heatmap shows correlations for all pollutant pairs across the study period.
+NO and NO$_2$ maintain a consistently strong positive correlation, reflecting their common sources from traffic and combustion and indicating a stable long-term relationship.
+In contrast, PM$_{2.5}$ correlations with other pollutants fluctuate, sometimes even reversing, likely due to short-term pollution events or changing weather conditions.
+A particularly interesting pattern is seen with NO$_2$ and O$_3$: their correlation shifts show clear reversals, highlighting seasonal photochemical processes.
+
+For a closer look at how individual pollutants interact, we focus on the NO$_2$–O$_3$ pair.
+The line plot below shows how their correlation changes over time, highlighting moments when the relationship strengthens, weakens, or even flips direction.
+This detailed view complements the broader trends seen in the heatmap and helps us understand the dynamic interactions between these two important pollutants.
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+# A specific pollutant pair (NO2–O3) is selected and correlation is extracted for it  
+pair <- "NO2.O3"
+pair_cor <- tidy_cor %>%
+  filter(interaction(var1, var2) == pair)
+```
+
+```{r, echo=FALSE, message=FALSE, warning= FALSE}
+# Line plot for the selected pair showing how correlation changes over time
+# Horizontal dashed line at y=0 to highlight positive/negative correlations
+ggplot(pair_cor, aes(date, correlation)) +
+  geom_line(linewidth = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = paste("Correlation Over Time:", gsub("\\.", " – ", pair)),
+    x = "Date",
+    y = "Correlation"
+  ) +
+  theme_minimal()
+```
+
+=\> The line plot shows how the correlation between NO$_2$ and O$_3$ changes over time.
+It starts slightly negative and later shifts to positive, reflecting periods when their interaction strengthens or weakens.
+Overall, the relationship fluctuates around zero, highlighting that it is variable rather than stable.
