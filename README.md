@@ -58,3 +58,14 @@ Business Analytics, University of Plymouth,
   PLYM monitoring sites
 - NO₂ concentrations relatively stable 
   across both Plymouth locations
+
+## How to Run
+1. Clone or download this repository
+2. Place the CSV data files in the 
+   same folder as the .Rmd file
+3. Open the .Rmd file in RStudio
+4. Install required packages:
+   install.packages(c("tidyverse", "tm", 
+   "stringi", "ggtext", "lubridate",
+   "wordcloud", "wordcloud2"))
+5. Click "Knit" to run the full analysis
