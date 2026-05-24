@@ -29,7 +29,6 @@ We began by loading the `BBC News` dataset using `read_csv()`.
 
 ```{r, echo=FALSE, message=FALSE, warning= FALSE, include= FALSE}
 Sys.setlocale("LC_TIME", "en_US.UTF-8")
-setwd(dirname(getActiveDocumentContext()$path))
 #install.packages('tinytex', repos= "https://cran.r-project.org")
 #tinytex::install_tinytex(force = TRUE)
 
